@@ -4,15 +4,24 @@ import (
 	"fmt"
 	"golang.org/x/net/context"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-func runControllerRuntimeExample() {
-	config := ctrl.GetConfigOrDie()
+type ControllerRuntimeExample struct {
+	config *rest.Config
+}
 
-	mgr, err := ctrl.NewManager(config, ctrl.Options{
+func NewControllerRuntimeExample(config *rest.Config) *ControllerRuntimeExample {
+	return &ControllerRuntimeExample{
+		config: config,
+	}
+}
+
+func (c *ControllerRuntimeExample) runControllerRuntimeExample() {
+	mgr, err := ctrl.NewManager(c.config, ctrl.Options{
 		// 0.16.0+
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{

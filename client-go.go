@@ -12,29 +12,24 @@ import (
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
-	"path/filepath"
 	"time"
 )
 
-func runExample() {
-	var kubeconfig string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = filepath.Join(home, ".kube", "config")
-	} else {
-		kubeconfig = ""
-	}
+type ClientGoExample struct {
+	config *rest.Config
+}
 
-	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if err != nil {
-		panic(err.Error())
+func NewClientGoExample(config *rest.Config) *ClientGoExample {
+	return &ClientGoExample{
+		config: config,
 	}
+}
 
+func (c *ClientGoExample) runExample() {
 	// create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(c.config)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -48,7 +43,7 @@ func runExample() {
 		fmt.Println(deployment.Namespace, "/", deployment.Name)
 	}
 
-	dc, err := dynamic.NewForConfig(config)
+	dc, err := dynamic.NewForConfig(c.config)
 	if err != nil {
 		panic(err.Error())
 	}
