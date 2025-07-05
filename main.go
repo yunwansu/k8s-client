@@ -2,37 +2,47 @@ package main
 
 import (
 	"fmt"
-	"io"
+	v1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	"golang.org/x/net/context"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
-	"net/http/httptest"
 	"path/filepath"
 )
 
 func main() {
-	var kubeconfig string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = filepath.Join(home, ".kube", "config")
-	} else {
-		kubeconfig = ""
-	}
-
-	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	config, err := getConfig()
 	if err != nil {
 		panic(err.Error())
 	}
 
-	req := httptest.NewRequest("GET", "/api/v1/namespaces/kube-system/pods", nil)
-	writer := httptest.NewRecorder()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
 
-	server := NewServer(config)
-	server.ServeHTTP(writer, req)
+	resourceFilter, err := NewResourceFilter(ctx, config)
+	if err != nil {
+		panic(err.Error())
+	}
 
-	resp := writer.Result()
-	body, _ := io.ReadAll(resp.Body)
+	backup := v1.Backup{
+		Spec: v1.BackupSpec{
+			IncludedNamespaces:               []string{"kube-system"},
+			IncludedNamespaceScopedResources: []string{"persistentvolumeclaims"},
+			//IncludedClusterScopedResources:   []string{"pv"},
+		},
+	}
 
-	fmt.Println(resp.StatusCode)
-	fmt.Println(resp.Header)
-	fmt.Println(string(body))
+	items := resourceFilter.GetAllItems(backup.DeepCopy())
+	for _, item := range items {
+		fmt.Println(item)
+	}
+}
+
+func getConfig() (*rest.Config, error) {
+	kubeconfigPath := ""
+	if home := homedir.HomeDir(); home != "" {
+		kubeconfigPath = filepath.Join(home, ".kube", "config")
+	}
+
+	return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 }
