@@ -1,41 +1,30 @@
 package main
 
 import (
-	"fmt"
-	v1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	"golang.org/x/net/context"
+	"flag"
+	"k8s-client/pkg/server"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"os"
 	"path/filepath"
 )
 
 func main() {
+	fs := flag.NewFlagSet("", flag.ExitOnError)
+	fPort := fs.Int("port", 8080, "http listen port")
+	fs.Parse(os.Args[1:])
+
 	config, err := getConfig()
 	if err != nil {
 		panic(err.Error())
 	}
 
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
-
-	resourceFilter, err := NewResourceFilter(ctx, config)
+	s, err := server.NewServer(*fPort, config)
 	if err != nil {
 		panic(err.Error())
 	}
-
-	backup := v1.Backup{
-		Spec: v1.BackupSpec{
-			IncludedNamespaces:               []string{"kube-system"},
-			IncludedNamespaceScopedResources: []string{"persistentvolumeclaims"},
-			//IncludedClusterScopedResources:   []string{"pv"},
-		},
-	}
-
-	items := resourceFilter.GetAllItems(backup.DeepCopy())
-	for _, item := range items {
-		fmt.Println(item)
-	}
+	s.Run()
 }
 
 func getConfig() (*rest.Config, error) {

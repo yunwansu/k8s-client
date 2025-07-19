@@ -1,0 +1,26 @@
+#resource-filter-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+table {
+    border-spacing: 10px;
+}
+
+thead th {
+    text-align: left;
+}
+
+.alert {
+    display: none;
+    position: fixed;
+    left: 10px;
+    bottom: 10px;
+    background-color: cadetblue;
+    padding: 3px 10px;
+}
+
+.alert.show {
+    display: block;
+}

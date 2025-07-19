@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ResourceFilter test</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="index.js" defer></script>
+</head>
+<body>
+<form id="resource-filter-form" action="/resource-filter" method="post">
+    <div>
+        <label for="include-namespace">
+            include namespace:
+        </label>
+        <input type="text" id="include-namespace" name="includedNamespaces" value="*" />
+    </div>
+
+    <div>
+        <label for="exclude-namespace">
+            exclude namespace:
+        </label>
+        <input type="text" id="exclude-namespace" name="excludedNamespaces" />
+    </div>
+
+    <div>
+        <label for="include-resource">
+            include resource:
+        </label>
+        <input type="text" id="include-resource" name="includedResources"/>
+    </div>
+
+    <div>
+        <label for="exclude-resource">
+            exclude resource:
+        </label>
+        <input type="text" id="exclude-resource" name="excludedResources"/>
+    </div>
+
+    <div>
+        <label for="include-cluster-resource">
+            include cluster resource:
+        </label>
+        <input type="checkbox" id="include-cluster-resource" name="includeClusterResources" />
+    </div>
+
+    <input type="submit" />
+</form>
+<table>
+    <thead>
+        <tr>
+            <th>Kind</th>
+            <th>Resource</th>
+            <th>Namespace</th>
+            <th>Name</th>
+        </tr>
+    </thead>
+    <tbody id="resource-body"></tbody>
+</table>
+
+<div class="alert"></div>
+</body>
+</html>
