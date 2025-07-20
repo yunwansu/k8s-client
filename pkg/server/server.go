@@ -62,7 +62,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	resources := s.resourceFilter.GetAllItems(&backup)
+	resources, err := s.resourceFilter.GetFilteredItems(&backup)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	res, err := json.Marshal(resources)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

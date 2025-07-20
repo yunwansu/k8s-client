@@ -1,6 +1,7 @@
 package resource_filter
 
 import (
+	"errors"
 	"fmt"
 	"github.com/sirupsen/logrus"
 	v1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -43,9 +44,9 @@ type ResourceFilter struct {
 
 func NewResourceFilter(ctx context.Context, config *rest.Config) (*ResourceFilter, error) {
 	vconf := veleroConfig.GetDefaultConfig()
-	logLevel := vconf.LogLevel.Parse()
+	//logLevel := vconf.LogLevel.Parse()
 	format := vconf.LogFormat.Parse()
-	logger := logging.DefaultLogger(logLevel, format)
+	logger := logging.DefaultLogger(logrus.DebugLevel, format)
 
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
@@ -80,75 +81,69 @@ func NewResourceFilter(ctx context.Context, config *rest.Config) (*ResourceFilte
 	}, nil
 }
 
-func (r *ResourceFilter) GetAllItems(backup *v1.Backup) []*kubernetesResource {
+func (r *ResourceFilter) GetFilteredItems(backup *v1.Backup) ([]*kubernetesResource, error) {
 	request := pkgbackup.Request{
 		Backup: backup.DeepCopy(),
 	}
 
-	// validate whether Included/Excluded resources and IncludedClusterResource are mixed with
-	// Included/Excluded cluster-scoped/namespace-scoped resources.
-	if oldAndNewFilterParametersUsedTogether(request.Spec) {
+	validator := resourceFilterValidator{backupSpec: request.Spec}
+	if !validator.isValid() {
 		validatedError := fmt.Sprintf("include-resources, exclude-resources and include-cluster-resources are old filter parameters.\n" +
 			"include-cluster-scoped-resources, exclude-cluster-scoped-resources, include-namespace-scoped-resources and exclude-namespace-scoped-resources are new filter parameters.\n" +
 			"They cannot be used together")
-		request.Status.ValidationErrors = append(request.Status.ValidationErrors, validatedError)
+
+		return nil, errors.New(validatedError)
 	}
 
 	if collections.UseOldResourceFilters(request.Spec) {
 		// validate the included/excluded resources
 		ieErr := collections.ValidateIncludesExcludes(request.Spec.IncludedResources, request.Spec.ExcludedResources)
 		if len(ieErr) > 0 {
-			for _, err := range ieErr {
-				request.Status.ValidationErrors = append(request.Status.ValidationErrors, fmt.Sprintf("Invalid included/excluded resource lists: %v", err))
-			}
-		} else {
-			request.Spec.IncludedResources, request.Spec.ExcludedResources =
-				modifyResourceIncludeExclude(
-					request.Spec.IncludedResources,
-					request.Spec.ExcludedResources,
-					append(autoExcludeNamespaceScopedResources, autoExcludeClusterScopedResources...),
-				)
+			return nil, fmt.Errorf("Invalid included/excluded resource lists: %v", errors.Join(ieErr...))
 		}
+
+		request.Spec.IncludedResources, request.Spec.ExcludedResources =
+			modifyResourceIncludeExclude(
+				request.Spec.IncludedResources,
+				request.Spec.ExcludedResources,
+				append(autoExcludeNamespaceScopedResources, autoExcludeClusterScopedResources...),
+			)
 	} else {
 		// validate the cluster-scoped included/excluded resources
 		clusterErr := collections.ValidateScopedIncludesExcludes(request.Spec.IncludedClusterScopedResources, request.Spec.ExcludedClusterScopedResources)
 		if len(clusterErr) > 0 {
-			for _, err := range clusterErr {
-				request.Status.ValidationErrors = append(request.Status.ValidationErrors, fmt.Sprintf("Invalid cluster-scoped included/excluded resource lists: %s", err))
-			}
-		} else {
-			request.Spec.IncludedClusterScopedResources, request.Spec.ExcludedClusterScopedResources =
-				modifyResourceIncludeExclude(
-					request.Spec.IncludedClusterScopedResources,
-					request.Spec.ExcludedClusterScopedResources,
-					autoExcludeClusterScopedResources,
-				)
+			return nil, fmt.Errorf("Invalid cluster-scoped included/excluded resource lists: %s", errors.Join(clusterErr...))
 		}
+
+		request.Spec.IncludedClusterScopedResources, request.Spec.ExcludedClusterScopedResources =
+			modifyResourceIncludeExclude(
+				request.Spec.IncludedClusterScopedResources,
+				request.Spec.ExcludedClusterScopedResources,
+				autoExcludeClusterScopedResources,
+			)
 
 		// validate the namespace-scoped included/excluded resources
 		namespaceErr := collections.ValidateScopedIncludesExcludes(request.Spec.IncludedNamespaceScopedResources, request.Spec.ExcludedNamespaceScopedResources)
 		if len(namespaceErr) > 0 {
-			for _, err := range namespaceErr {
-				request.Status.ValidationErrors = append(request.Status.ValidationErrors, fmt.Sprintf("Invalid namespace-scoped included/excluded resource lists: %s", err))
-			}
-		} else {
-			request.Spec.IncludedNamespaceScopedResources, request.Spec.ExcludedNamespaceScopedResources =
-				modifyResourceIncludeExclude(
-					request.Spec.IncludedNamespaceScopedResources,
-					request.Spec.ExcludedNamespaceScopedResources,
-					autoExcludeNamespaceScopedResources,
-				)
+			return nil, fmt.Errorf("Invalid namespace-scoped included/excluded resource lists: %s", errors.Join(namespaceErr...))
 		}
+		request.Spec.IncludedNamespaceScopedResources, request.Spec.ExcludedNamespaceScopedResources =
+			modifyResourceIncludeExclude(
+				request.Spec.IncludedNamespaceScopedResources,
+				request.Spec.ExcludedNamespaceScopedResources,
+				autoExcludeNamespaceScopedResources,
+			)
 	}
 
 	// validate the included/excluded namespaces
-	for _, err := range collections.ValidateNamespaceIncludesExcludes(request.Spec.IncludedNamespaces, request.Spec.ExcludedNamespaces) {
-		request.Status.ValidationErrors = append(request.Status.ValidationErrors, fmt.Sprintf("Invalid included/excluded namespace lists: %v", err))
+	err := collections.ValidateNamespaceIncludesExcludes(request.Spec.IncludedNamespaces, request.Spec.ExcludedNamespaces)
+	if len(err) != 0 {
+		return nil, fmt.Errorf("Invalid included/excluded namespace lists: %v", errors.Join(err...))
 	}
 
 	// validate that only one exists orLabelSelector or just labelSelector (singular)
 	if request.Spec.OrLabelSelectors != nil && request.Spec.LabelSelector != nil {
-		request.Status.ValidationErrors = append(request.Status.ValidationErrors, "encountered labelSelector as well as orLabelSelectors in backup spec, only one can be specified")
+		return nil, errors.New("encountered labelSelector as well as orLabelSelectors in backup spec, only one can be specified")
 	}
 
 	request.NamespaceIncludesExcludes = getNamespaceIncludesExcludes(request.Backup)
@@ -181,7 +176,7 @@ func (r *ResourceFilter) GetAllItems(backup *v1.Backup) []*kubernetesResource {
 		pageSize: 30,
 	}
 
-	return collector.getAllItems()
+	return collector.getAllItems(), nil
 }
 
 func cohabitatingResources() map[string]*cohabitatingResource {
@@ -215,18 +210,6 @@ func getNamespacesToList(ie *collections.IncludesExcludes) []string {
 	}
 
 	return list
-}
-
-func oldAndNewFilterParametersUsedTogether(backupSpec v1.BackupSpec) bool {
-	haveOldResourceFilterParameters := len(backupSpec.IncludedResources) > 0 ||
-		(len(backupSpec.ExcludedResources) > 0) ||
-		(backupSpec.IncludeClusterResources != nil)
-	haveNewResourceFilterParameters := len(backupSpec.IncludedClusterScopedResources) > 0 ||
-		(len(backupSpec.ExcludedClusterScopedResources) > 0) ||
-		(len(backupSpec.IncludedNamespaceScopedResources) > 0) ||
-		(len(backupSpec.ExcludedNamespaceScopedResources) > 0)
-
-	return haveOldResourceFilterParameters && haveNewResourceFilterParameters
 }
 
 func modifyResourceIncludeExclude(include, exclude, addedExclude []string) (modifiedInclude, modifiedExclude []string) {

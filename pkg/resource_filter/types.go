@@ -1,6 +1,25 @@
 package resource_filter
 
-import "k8s.io/apimachinery/pkg/runtime/schema"
+import (
+	v1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
+
+type resourceFilterValidator struct {
+	backupSpec v1.BackupSpec
+}
+
+func (v *resourceFilterValidator) isValid() bool {
+	haveOldResourceFilterParameters := len(v.backupSpec.IncludedResources) > 0 ||
+		(len(v.backupSpec.ExcludedResources) > 0) ||
+		(v.backupSpec.IncludeClusterResources != nil)
+	haveNewResourceFilterParameters := len(v.backupSpec.IncludedClusterScopedResources) > 0 ||
+		(len(v.backupSpec.ExcludedClusterScopedResources) > 0) ||
+		(len(v.backupSpec.IncludedNamespaceScopedResources) > 0) ||
+		(len(v.backupSpec.ExcludedNamespaceScopedResources) > 0)
+
+	return !(haveOldResourceFilterParameters && haveNewResourceFilterParameters)
+}
 
 type cohabitatingResource struct {
 	resource       string

@@ -8,7 +8,6 @@ import (
 	"github.com/vmware-tanzu/velero/pkg/client"
 	veleroDiscovery "github.com/vmware-tanzu/velero/pkg/discovery"
 	"github.com/vmware-tanzu/velero/pkg/kuberesource"
-	"github.com/vmware-tanzu/velero/pkg/plugin/velero"
 	"golang.org/x/net/context"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,49 +26,15 @@ type itemCollector struct {
 	discoveryHelper       veleroDiscovery.Helper
 	dynamicFactory        client.DynamicFactory
 	cohabitatingResources map[string]*cohabitatingResource
-	//dir                   string
-	pageSize  int
-	nsTracker nsTracker
-}
-
-// getItemsFromResourceIdentifiers get the kubernetesResources
-// specified by the input parameter resourceIDs.
-func (r *itemCollector) getItemsFromResourceIdentifiers(
-	resourceIDs []velero.ResourceIdentifier,
-) []*kubernetesResource {
-	grResourceIDsMap := make(map[schema.GroupResource][]velero.ResourceIdentifier)
-	for _, resourceID := range resourceIDs {
-		grResourceIDsMap[resourceID.GroupResource] = append(
-			grResourceIDsMap[resourceID.GroupResource], resourceID)
-	}
-	return r.getItems(grResourceIDsMap)
+	pageSize              int
+	nsTracker             nsTracker
 }
 
 // getAllItems gets all backup-relevant items from all API groups.
 func (r *itemCollector) getAllItems() []*kubernetesResource {
-	resources := r.getItems(nil)
-
-	return r.nsTracker.filterNamespaces(resources)
-}
-
-// getItems gets all backup-relevant items from all API groups,
-//
-// If resourceIDsMap is nil, then all items from the cluster are
-// pulled for each API group, subject to include/exclude rules,
-// except the namespace, because the namespace filtering depends on
-// all namespaced-scoped resources.
-//
-// If resourceIDsMap is supplied, then only those resources are
-// returned, with the appropriate APIGroup information filled in. In
-// this case, include/exclude rules are not invoked, since we already
-// have the list of items, we just need the item collector/discovery
-// helper to fill in the missing GVR, etc. context.
-func (r *itemCollector) getItems(
-	resourceIDsMap map[schema.GroupResource][]velero.ResourceIdentifier,
-) []*kubernetesResource {
 	var resources []*kubernetesResource
 	for _, group := range r.discoveryHelper.Resources() {
-		groupItems, err := r.getGroupItems(r.log, group, resourceIDsMap)
+		groupItems, err := r.getObjectsByGroup(r.log, group)
 		if err != nil {
 			r.log.WithError(err).WithField("apiGroup", group.String()).
 				Error("Error collecting resources from API group")
@@ -78,17 +43,15 @@ func (r *itemCollector) getItems(
 
 		resources = append(resources, groupItems...)
 	}
-
-	return resources
+	return r.nsTracker.filterNamespaces(resources)
 }
 
-// getGroupItems collects all relevant items from a single API group.
+// getObjectsByGroup collects all relevant items from a single API group.
 // If resourceIDsMap is supplied, then only those items are returned,
 // with GVR/APIResource metadata supplied.
-func (r *itemCollector) getGroupItems(
+func (r *itemCollector) getObjectsByGroup(
 	log logrus.FieldLogger,
 	group *metav1.APIResourceList,
-	resourceIDsMap map[schema.GroupResource][]velero.ResourceIdentifier,
 ) ([]*kubernetesResource, error) {
 	log = log.WithField("group", group.GroupVersion)
 
@@ -103,7 +66,7 @@ func (r *itemCollector) getGroupItems(
 
 	var items []*kubernetesResource
 	for _, resource := range group.APIResources {
-		resourceItems, err := r.getResourceItems(log, gv, resource, resourceIDsMap)
+		resourceItems, err := r.getObjects(log, gv, resource)
 		if err != nil {
 			log.WithError(err).WithField("resource", resource.String()).
 				Error("Error getting items for resource")
@@ -116,14 +79,13 @@ func (r *itemCollector) getGroupItems(
 	return items, nil
 }
 
-// getResourceItems collects all relevant items for a given group-version-resource.
+// getObjects collects all relevant items for a given group-version-resource.
 // If resourceIDsMap is supplied, the items will be pulled from here
 // rather than from the cluster and applying include/exclude rules.
-func (r *itemCollector) getResourceItems(
+func (r *itemCollector) getObjects(
 	log logrus.FieldLogger,
 	gv schema.GroupVersion,
 	resource metav1.APIResource,
-	resourceIDsMap map[schema.GroupResource][]velero.ResourceIdentifier,
 ) ([]*kubernetesResource, error) {
 	log = log.WithField("resource", resource.Name)
 
@@ -138,51 +100,6 @@ func (r *itemCollector) getResourceItems(
 	preferredGVR, _, err := r.discoveryHelper.ResourceFor(gr.WithVersion(""))
 	if err != nil {
 		return nil, errors.WithStack(err)
-	}
-
-	// If we have a resourceIDs map, then only return items listed in it
-	if resourceIDsMap != nil {
-		resourceIDs, ok := resourceIDsMap[gr]
-		if !ok {
-			log.Info("Skipping resource because no items found in supplied ResourceIdentifier list")
-			return nil, nil
-		}
-		var items []*kubernetesResource
-		for _, resourceID := range resourceIDs {
-			log.WithFields(
-				logrus.Fields{
-					"namespace": resourceID.Namespace,
-					"name":      resourceID.Name,
-				},
-			).Infof("Getting item")
-			resourceClient, err := r.dynamicFactory.ClientForGroupVersionResource(
-				gv,
-				resource,
-				resourceID.Namespace,
-			)
-			if err != nil {
-				log.WithError(errors.WithStack(err)).Error("Error getting client for resource")
-				continue
-			}
-			unstructured, err := resourceClient.Get(resourceID.Name, metav1.GetOptions{})
-			if err != nil {
-				log.WithError(errors.WithStack(err)).Error("Error getting item")
-				continue
-			}
-
-			r.log.Info(unstructured)
-
-			items = append(items, &kubernetesResource{
-				GroupResource: gr,
-				PreferredGVR:  preferredGVR,
-				Namespace:     resourceID.Namespace,
-				Name:          resourceID.Name,
-				//Path:          Path,
-				Kind: resource.Kind,
-			})
-		}
-
-		return items, nil
 	}
 
 	if !r.backupRequest.ResourceIncludesExcludes.ShouldInclude(gr.String()) {
